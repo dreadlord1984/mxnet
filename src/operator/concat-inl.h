@@ -1,5 +1,23 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 /*!
- * Copyright (c) 2015 by Contributors
  * \file concat-inl.h
  * \brief
  * \author Bing Xu
@@ -36,7 +54,7 @@ struct ConcatParam : public dmlc::Parameter<ConcatParam> {
   }
 };  // struct ConcatParam
 
-template<typename xpu>
+template<typename xpu, typename DType>
 class ConcatOp : public Operator {
  public:
   explicit ConcatOp(ConcatParam param)
@@ -50,39 +68,27 @@ class ConcatOp : public Operator {
     using namespace mshadow;
     using namespace mshadow::expr;
     CHECK_EQ(static_cast<int>(in_data.size()), size_);
-    CHECK_EQ(out_data.size(), 1);
-    CHECK_EQ(req[concat_enum::kOut], kWriteTo);
+    CHECK_EQ(out_data.size(), 1U);
     CHECK_LT(dimension_, in_data[concat_enum::kData0].ndim());
     Stream<xpu> *s = ctx.get_stream<xpu>();
-    std::vector<Tensor<xpu, 4> > data(size_);
-    Tensor<xpu, 4> out;
-    if (in_data[concat_enum::kData0].ndim() < 4) {
-      uint32_t dim = 0;
-      for (int i = 0; i < size_; ++i) {
-        Shape<4> dshape;
-        if (in_data[concat_enum::kData0].ndim() == 2)
-          dshape = Shape4(in_data[i].shape_[0], in_data[i].shape_[1], 1, 1);
-        else
-          dshape = Shape4(in_data[i].shape_[0], in_data[i].shape_[1], in_data[i].shape_[2], 1);
-        data[i] = in_data[i].get_with_shape<xpu, 4, real_t>(dshape, s);
-        dim += in_data[i].shape_[dimension_];
-      }
-      Shape<4> dshape_out;
-      int a, b, c;
-      a = (dimension_ == 0) ? dim : in_data[concat_enum::kData0].shape_[0];
-      b = (dimension_ == 1) ? dim : in_data[concat_enum::kData0].shape_[1];
-      int dim2 = (in_data[concat_enum::kData0].ndim() == 2) ? 1
-                        : in_data[concat_enum::kData0].shape_[2];
-      c = (dimension_ == 2) ? dim : dim2;
-      dshape_out = Shape4(a, b, c, 1);
-      out = out_data[concat_enum::kOut].get_with_shape<xpu, 4, real_t>(dshape_out, s);
-    } else {
-      for (int i = 0; i < size_; ++i) {
-        data[i] = in_data[i].get<xpu, 4, real_t>(s);
-      }
-      out = out_data[concat_enum::kOut].get<xpu, 4, real_t>(s);
+    std::vector<Tensor<xpu, 3, DType> > data(size_);
+    Tensor<xpu, 3, DType> out;
+    size_t leading = 1, trailing = 1;
+    for (int i = 0; i < dimension_; ++i) {
+      leading *= out_data[concat_enum::kOut].shape_[i];
     }
-    Concatenate(data, &out, dimension_);
+    for (int i = dimension_ + 1; i < out_data[concat_enum::kOut].ndim(); ++i) {
+      trailing *= out_data[concat_enum::kOut].shape_[i];
+    }
+    size_t mid = out_data[concat_enum::kOut].shape_[dimension_];
+    Shape<3> oshape = Shape3(leading, mid, trailing);
+    out = out_data[concat_enum::kOut].get_with_shape<xpu, 3, DType>(oshape, s);
+
+    for (int i = 0; i < size_; ++i) {
+      Shape<3> dshape = Shape3(leading, in_data[i].shape_[dimension_], trailing);
+      data[i] = in_data[i].get_with_shape<xpu, 3, DType>(dshape, s);
+    }
+    Concatenate(data, &out, 1, req[concat_enum::kOut]);
   }
 
   virtual void Backward(const OpContext &ctx,
@@ -94,40 +100,27 @@ class ConcatOp : public Operator {
                         const std::vector<TBlob> &aux_states) {
     using namespace mshadow;
     using namespace mshadow::expr;
-    CHECK_EQ(out_grad.size(), 1);
+    CHECK_EQ(out_grad.size(), 1U);
     CHECK_EQ(in_grad.size(), static_cast<size_t>(size_));
     Stream<xpu> *s = ctx.get_stream<xpu>();
-    std::vector<Tensor<xpu, 4> > grad_in(size_);
-    Tensor<xpu, 4> grad;
-    if (out_grad[concat_enum::kOut].ndim() < 4) {
-      uint32_t dim = 0;
-      for (int i = 0; i < size_; ++i) {
-        Shape<4> dshape;
-        if (out_grad[concat_enum::kOut].ndim() == 2)
-          dshape = Shape4(in_grad[i].shape_[0], in_grad[i].shape_[1], 1, 1);
-        else
-          dshape = Shape4(in_grad[i].shape_[0], in_grad[i].shape_[1], in_grad[i].shape_[2], 1);
-        grad_in[i] = in_grad[i].get_with_shape<xpu, 4, real_t>(dshape, s);
-        dim += in_grad[i].shape_[dimension_];
-        CHECK_EQ(req[i], kWriteTo);
-      }
-      Shape<4> dshape_out;
-      int a, b, c;
-      a = (dimension_ == 0) ? dim : in_grad[concat_enum::kData0].shape_[0];
-      b = (dimension_ == 1) ? dim : in_grad[concat_enum::kData0].shape_[1];
-      int dim2 = (out_grad[concat_enum::kOut].ndim() == 2) ? 1
-                      : in_grad[concat_enum::kData0].shape_[2];
-      c = (dimension_ == 2) ? dim : dim2;
-      dshape_out = Shape4(a, b, c, 1);
-      grad = out_grad[concat_enum::kOut].get_with_shape<xpu, 4, real_t>(dshape_out, s);
-    } else {
-      for (int i = 0; i < size_; ++i) {
-        grad_in[i] = in_grad[i].get<xpu, 4, real_t>(s);
-        CHECK_EQ(req[i], kWriteTo);
-      }
-      grad = out_grad[concat_enum::kOut].get<xpu, 4, real_t>(s);
+    std::vector<Tensor<xpu, 3, DType> > grad_in(size_);
+    Tensor<xpu, 3, DType> grad;
+    size_t leading = 1, trailing = 1;
+    for (int i = 0; i < dimension_; ++i) {
+      leading *= out_grad[concat_enum::kOut].shape_[i];
     }
-    Split(grad, &grad_in, dimension_);
+    for (int i = dimension_ + 1; i < out_grad[concat_enum::kOut].ndim(); ++i) {
+      trailing *= out_grad[concat_enum::kOut].shape_[i];
+    }
+    size_t mid = out_grad[concat_enum::kOut].shape_[dimension_];
+    Shape<3> oshape = Shape3(leading, mid, trailing);
+    grad = out_grad[concat_enum::kOut].get_with_shape<xpu, 3, DType>(oshape, s);
+
+    for (int i = 0; i < size_; ++i) {
+      Shape<3> dshape = Shape3(leading, in_grad[i].shape_[dimension_], trailing);
+      grad_in[i] = in_grad[i].get_with_shape<xpu, 3, DType>(dshape, s);
+    }
+    Split(grad, &grad_in, 1, req);
   }
 
  private:
@@ -136,7 +129,7 @@ class ConcatOp : public Operator {
 };  // class ConcatOp
 
 template<typename xpu>
-Operator *CreateOp(ConcatParam param);
+Operator *CreateOp(ConcatParam param, int dtype);
 
 #if DMLC_USE_CXX11
 class ConcatProp : public OperatorProperty {
@@ -152,7 +145,7 @@ class ConcatProp : public OperatorProperty {
   std::vector<std::string> ListArguments() const override {
     std::vector<std::string> ret;
     for (int i = 0; i < param_.num_args; ++i) {
-      ret.push_back(std::string("arg") + static_cast<char>('0' + i));
+      ret.push_back(std::string("arg") + std::to_string(i));
     }
     return ret;
   }
@@ -162,28 +155,75 @@ class ConcatProp : public OperatorProperty {
                   std::vector<TShape> *aux_shape) const override {
     using namespace mshadow;
     CHECK_EQ(in_shape->size(), static_cast<size_t>(param_.num_args));
-    TShape dshape = in_shape->at(concat_enum::kData0);
-    if (dshape.ndim() == 0) return false;
-    CHECK_GT(dshape.ndim(), 1);
-    CHECK_LT(static_cast<index_t>(param_.dim), dshape.ndim())
-        <<"the dimension to be concated is not in the range of input's dimension";
-    for (int i = 1; i < param_.num_args; ++i) {
-      const TShape &tmp = in_shape->at(i);
-      if (tmp.ndim() == 0) return false;
-      for (index_t j = 0; j < dshape.ndim(); ++j) {
-        if (j == static_cast<index_t>(param_.dim)) {
-          dshape[param_.dim] += tmp[param_.dim];
-        } else {
-          CHECK_EQ(dshape[j], tmp[j])
-              << "Incorrect shape[" << i << "]: "
-              << tmp << ". "
-              << "(first input shape: "
-              << dshape << ")";
-        }
+    TShape dshape;
+    index_t size = 0;
+    bool has_zero = false;
+    for (int i = 0; i < param_.num_args; ++i) {
+      TShape tmp = (*in_shape)[i];
+      if (tmp.ndim()) {
+        CHECK_LT(static_cast<index_t>(param_.dim), tmp.ndim())
+          << "concat dim " << param_.dim << " out of range of input shape " << tmp;
+        has_zero = tmp[param_.dim] == 0 || has_zero;
+        size += tmp[param_.dim];
+        tmp[param_.dim] = 0;
+        shape_assign(&dshape, tmp);
       }
     }
-    out_shape->clear();
-    out_shape->push_back(dshape);
+
+    TShape tmp = (*out_shape)[0];
+    if (tmp.ndim()) {
+      CHECK_LT(static_cast<index_t>(param_.dim), tmp.ndim())
+        << "concat dim " << param_.dim << " out of range of input shape " << tmp;
+      tmp[param_.dim] = 0;
+      shape_assign(&dshape, tmp);
+    }
+
+    if (dshape.ndim() == 0) return false;
+
+    for (int i = 0; i < param_.num_args; ++i) {
+      CHECK(shape_assign(&(*in_shape)[i], dshape))
+        << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
+    }
+
+    if (!has_zero) dshape[param_.dim] = size;
+    CHECK(shape_assign(&(*out_shape)[0], dshape))
+      << "Incompatible output shape: expected " << dshape << ", got " << (*out_shape)[0];
+
+    return dshape.Size() != 0;
+  }
+
+  bool InferType(std::vector<int> *in_type,
+                 std::vector<int> *out_type,
+                 std::vector<int> *aux_type) const override {
+    int dtype = -1;
+
+    for (size_t i = 0; i < in_type->size(); ++i) {
+      if (dtype == -1) {
+        dtype = in_type->at(i);
+      } else {
+        CHECK(in_type->at(i) == dtype ||
+              in_type->at(i) == -1) <<
+              "Non-uniform data type in Concat";
+      }
+    }
+
+    if (dtype == -1) {
+      LOG(FATAL) << "Not enough information to infer type in Concat.";
+      return false;
+    }
+
+    size_t nin = this->ListArguments().size();
+    in_type->clear();
+    for (size_t i = 0; i < nin; ++i) in_type->push_back(dtype);
+
+    size_t naux = this->ListAuxiliaryStates().size();
+    aux_type->clear();
+    for (size_t i = 0; i < naux; ++i) aux_type->push_back(dtype);
+
+    size_t nout = this->ListOutputs().size();
+    out_type->clear();
+    for (size_t i = 0; i < nout; ++i) out_type->push_back(dtype);
+
     return true;
   }
 
@@ -204,7 +244,13 @@ class ConcatProp : public OperatorProperty {
     return out_grad;
   }
 
-  Operator* CreateOperator(Context ctx) const override;
+  Operator* CreateOperator(Context ctx) const override {
+    LOG(FATAL) << "Not implemented";
+    return NULL;
+  }
+
+  Operator* CreateOperatorEx(Context ctx, std::vector<TShape> *in_shape,
+                             std::vector<int> *in_type) const override;
 
  private:
   ConcatParam param_;

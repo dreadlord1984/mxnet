@@ -1,14 +1,12 @@
-is.MXDataIter <- function(x) {
-  inherits(x, "Rcpp_MXNativeDataIter") ||
-  inherits(x, "Rcpp_MXArrayDataIter")
-}
-
 #' Judge if an object is mx.dataiter
 #'
 #' @return Logical indicator
 #'
 #' @export
-is.mx.dataiter <- is.MXDataIter
+is.mx.dataiter <- function(x) {
+  inherits(x, "Rcpp_MXNativeDataIter") ||
+  inherits(x, "Rcpp_MXArrayDataIter")
+}
 
 #' Extract a certain field from DataIter.
 #'
@@ -41,7 +39,14 @@ mx.io.arrayiter <- function(data, label,
                             batch.size=128,
                             shuffle=FALSE) {
   if (shuffle) {
-    unif.rnds <- as.array(mx.runif(c(length(label)), ctx=mx.cpu()));
+    shape <- dim(data)
+    if (is.null(shape)) {
+      num.data <- length(data)
+    } else {
+      ndim <- length(shape)
+      num.data <- shape[[ndim]]
+    }
+    unif.rnds <- as.array(mx.runif(c(num.data), ctx=mx.cpu()));
   } else {
     unif.rnds <- as.array(0)
   }

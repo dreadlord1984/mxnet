@@ -1,5 +1,23 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 /*!
- * Copyright (c) 2015 by Contributors
  * \file softmax_activation-inl.h
  * \brief SoftmaxActivation operator
  * \author Junyuan Xie
@@ -25,21 +43,20 @@ namespace softmax_activation {
 enum SoftmaxActivationOpInputs {kData};
 enum SoftmaxActivationOpOutputs {kOut};
 enum SoftmaxActivationOpType {kInstance, kChannel};
+enum SoftmaxActivationOpResource {kTempSpace};
 }  // softmax_activation
 
 struct SoftmaxActivationParam : public dmlc::Parameter<SoftmaxActivationParam> {
   // use int for enumeration
-  int type;
+  int mode;
   DMLC_DECLARE_PARAMETER(SoftmaxActivationParam) {
-    DMLC_DECLARE_FIELD(type)
+    DMLC_DECLARE_FIELD(mode)
     .add_enum("instance", softmax_activation::kInstance)
     .add_enum("channel", softmax_activation::kChannel)
     .set_default(softmax_activation::kInstance)
-    .describe("Softmax Mode. If set to instance, this operator will compute a "
-    "softmax for each instance in the batch; this is the default mode. "
-    "If set to channel, this operator will compute a num_channel-class softmax at "
-    "each position of each instance; this can be used for fully convolutional network, "
-    "image segmentation, etc.");
+    .describe("Specifies how to compute the softmax. If set to ``instance``, "
+              "it computes softmax for each instance. If set to ``channel``, "
+              "It computes cross channel softmax for each position of each instance.");
   }
 };
 
@@ -61,12 +78,25 @@ class SoftmaxActivationOp : public Operator {
                        const std::vector<TBlob> &aux_args) {
     using namespace mshadow;
     using namespace mshadow::expr;
-    CHECK_EQ(in_data.size(), 1);
-    CHECK_EQ(out_data.size(), 1);
-    // Stream<xpu> *s = ctx.get_stream<xpu>();
-    // Tensor<xpu, 2> data = in_data[softmax_activation::kData].FlatTo2D<xpu, real_t>(s);
-    // Tensor<xpu, 2> out = out_data[softmax_activation::kOut].FlatTo2D<xpu, real_t>(s);
-    LOG(FATAL) << "non-cuDNN version not implemented yet.";
+    CHECK_EQ(in_data.size(), 1U);
+    CHECK_EQ(out_data.size(), 1U);
+    Stream<xpu> *s = ctx.get_stream<xpu>();
+    if (param_.mode == softmax_activation::kInstance) {
+      Tensor<xpu, 2> data = in_data[softmax_activation::kData].FlatTo2D<xpu, real_t>(s);
+      Tensor<xpu, 2> out = out_data[softmax_activation::kOut].FlatTo2D<xpu, real_t>(s);
+      Softmax(out, data);
+    } else {
+      CHECK_GE(in_data[softmax_activation::kData].ndim(), 3)
+        << "Input need to have a least 3 dimensions when mode=channel";
+      int n = in_data[softmax_activation::kData].size(0);
+      int k = in_data[softmax_activation::kData].size(1);
+      Shape<3> s3 = Shape3(n, k, static_cast<int>(in_data[softmax_activation::kData].Size()/n/k));
+      Tensor<xpu, 3, real_t> data =
+        in_data[softmax_activation::kData].get_with_shape<xpu, 3, real_t>(s3, s);
+      Tensor<xpu, 3, real_t> out =
+        out_data[softmax_activation::kOut].get_with_shape<xpu, 3, real_t>(s3, s);
+      Softmax(out, data);
+    }
   }
 
   virtual void Backward(const OpContext &ctx,
@@ -78,14 +108,29 @@ class SoftmaxActivationOp : public Operator {
                         const std::vector<TBlob> &aux_args) {
     using namespace mshadow;
     using namespace mshadow::expr;
-    CHECK_EQ(out_grad.size(), 1);
+    CHECK_EQ(out_grad.size(), 1U);
     CHECK(in_data.size() == 1 && in_grad.size() == 1);
-    CHECK_EQ(req.size(), 1);
-    // Stream<xpu> *s = ctx.get_stream<xpu>();
-    // Tensor<xpu, 2> m_out_grad = out_grad[softmax_activation::kOut].FlatTo2D<xpu, real_t>(s);
-    // Tensor<xpu, 2> m_out_data = out_data[softmax_activation::kOut].FlatTo2D<xpu, real_t>(s);
-    // Tensor<xpu, 2> m_in_grad = in_grad[softmax_activation::kData].FlatTo2D<xpu, real_t>(s);
-    LOG(FATAL) << "non-cuDNN version not implemented yet.";
+    CHECK_EQ(req.size(), 1U);
+    // Use 3d tensor for both mode -> {instance, channel}. Get shapes
+    int total_size = in_grad[softmax_activation::kData].Size();
+    int batch_size = in_grad[softmax_activation::kData].shape_[0];
+    int channel_num = in_grad[softmax_activation::kData].shape_[1];
+    int rest_size = total_size / (batch_size * channel_num);
+    const Shape<3> data_shape = Shape3(batch_size, channel_num, rest_size);
+    // Get tensors
+    Stream<xpu> *s = ctx.get_stream<xpu>();
+    Tensor<xpu, 3> m_out_grad =
+      out_grad[softmax_activation::kOut].get_with_shape<xpu, 3, real_t>(data_shape, s);
+    Tensor<xpu, 3> m_out_data =
+      out_data[softmax_activation::kOut].get_with_shape<xpu, 3, real_t>(data_shape, s);
+    Tensor<xpu, 3> m_in_grad =
+      in_grad[softmax_activation::kData].get_with_shape<xpu, 3, real_t>(data_shape, s);
+    // get requested temp space
+    Tensor<xpu, 2> workspace = ctx.requested[softmax_activation::kTempSpace].get_space<xpu>(
+        Shape2(batch_size, rest_size), s);
+    workspace = reduce_with_axis<red::sum, false>(m_out_grad * m_out_data, 1);
+    Assign(m_in_grad, req[softmax_activation::kData],
+        m_out_data * (m_out_grad - broadcast_with_axis(workspace, 0, channel_num)));
   }
 
  private:
@@ -111,7 +156,7 @@ class SoftmaxActivationProp : public OperatorProperty {
                   std::vector<TShape> *out_shape,
                   std::vector<TShape> *aux_shape) const override {
     using namespace mshadow;
-    CHECK_EQ(in_shape->size(), 1) << "Input:[data]";
+    CHECK_EQ(in_shape->size(), 1U) << "Input:[data]";
     const TShape &dshape = in_shape->at(softmax_activation::kData);
     if (dshape.ndim() == 0) return false;
     out_shape->clear();
@@ -135,6 +180,11 @@ class SoftmaxActivationProp : public OperatorProperty {
     const std::vector<int> &in_data,
     const std::vector<int> &out_data) const override {
     return {out_grad[softmax_activation::kOut], out_data[softmax_activation::kOut]};
+  }
+
+  std::vector<ResourceRequest> BackwardResource(
+      const std::vector<TShape> &in_shape) const override {
+    return {ResourceRequest::kTempSpace};
   }
 
   std::vector<std::pair<int, void*> > BackwardInplaceOption(

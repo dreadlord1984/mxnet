@@ -1,3 +1,20 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
 """Create a Cifar data iterator.
 
 This example shows how to create a iterator reading from recordio,
@@ -7,21 +24,21 @@ All you need to do is to set some parameters.
 import mxnet as mx
 
 dataiter = mx.io.ImageRecordIter(
-        # Dataset Paramter
+        # Dataset Parameter
         # Impulsary
         # indicating the data file, please check the data is already there
         path_imgrec="data/cifar/train.rec",
-        # Dataset/Augment Paramter
+        # Dataset/Augment Parameter
         # Impulsary
         # indicating the image size after preprocessing
         data_shape=(3,28,28),
-        # Batch Paramter
+        # Batch Parameter
         # Impulsary
         # tells how many images in a batch
         batch_size=100,
         # Augmentation Parameter
         # Optional
-        # when offers mean_img, each image will substract the mean value at each pixel
+        # when offers mean_img, each image will subtract the mean value at each pixel
         mean_img="data/cifar/cifar10_mean.bin",
         # Augmentation Parameter
         # Optional
@@ -29,7 +46,7 @@ dataiter = mx.io.ImageRecordIter(
         rand_crop=True,
         # Augmentation Parameter
         # Optional
-        # randly mirror the image horizontally
+        # randomly mirror the image horizontally
         rand_mirror=True,
         # Augmentation Parameter
         # Optional

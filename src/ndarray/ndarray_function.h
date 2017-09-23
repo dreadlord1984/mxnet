@@ -1,5 +1,23 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 /*!
- *  Copyright (c) 2015 by Contributors
  * \file ndarray_op.h
  * \brief the real execution functions of ndarray operations
  */
@@ -10,6 +28,7 @@
 #include <mshadow/tensor.h>
 #include <mxnet/base.h>
 #include <mxnet/resource.h>
+#include <mxnet/ndarray.h>
 #include <vector>
 #include "../operator/mshadow_op.h"
 
@@ -41,9 +60,14 @@ struct Div : public BinaryBase {
   typedef mshadow::op::div mshadow_op;
 };
 
+struct Mod : public BinaryBase {
+  typedef op::mshadow_op::mod mshadow_op;
+};
+
 struct ClipMin : public BinaryBase {
   struct mshadow_op {
-    MSHADOW_XINLINE static real_t Map(real_t a, real_t b) {
+    template<typename DType>
+    MSHADOW_XINLINE static DType Map(DType a, DType b) {
       if (a < b) {
         return b;
       } else {
@@ -55,7 +79,8 @@ struct ClipMin : public BinaryBase {
 
 struct ClipMax : public BinaryBase {
   struct mshadow_op {
-    MSHADOW_XINLINE static real_t Map(real_t a, real_t b) {
+    template<typename DType>
+    MSHADOW_XINLINE static DType Map(DType a, DType b) {
       if (a > b) {
         return b;
       } else {
@@ -63,15 +88,6 @@ struct ClipMax : public BinaryBase {
       }
     }
   };
-};
-
-struct Dot {
-  inline static TShape GetShape(const TShape &lshape, const TShape &rshape) {
-    CHECK(lshape.ndim() == 2 && rshape.ndim() == 2) << "dot only support 2D Array";
-    CHECK_EQ(lshape[1], rshape[0]) << "dot shape error: " << lshape << " X " << rshape;
-    size_t target_shape[] = {lshape[0], rshape[1]};
-    return TShape(target_shape, target_shape + 2);
-  }
 };
 
 
@@ -92,14 +108,37 @@ struct MatChooseRowElem {
   }
 };
 
+struct MatFillRowElem {
+  inline static TShape GetShape(const TShape &lshape, const TShape &mshape, const TShape &rshape) {
+    CHECK(lshape.ndim() == 2 && mshape.ndim() == 1 && rshape.ndim() == 1)
+        << "fill_row_element only support 2D Matrix, 1D value and 1D index";
+    CHECK((lshape[0] == mshape[0]) && (mshape[0] == rshape[0]))
+        << "choose_row_element index vector, value vector and matrix shape mismatch";
+    return lshape;
+  }
+};
+
 // type holder for random number generators
 struct UniformDistribution {};
 
 struct GaussianDistribution {};
 
+struct GammaDistribution {};
+
+struct ExponentialDistribution {};
+
+struct PoissonDistribution {};
+
+struct NegBinomialDistribution {};
+
+struct GenNegBinomialDistribution {};
+
 template<typename Device>
 void EvalClip(const TBlob &src, const real_t &a_min, const real_t &a_max,
               TBlob *ret, RunContext ctx);
+
+template<typename Device, typename OP>
+void Eval(const TBlob &lhs, const TBlob &mhs, const TBlob &rhs, TBlob *ret, RunContext ctx);
 
 template<typename Device, typename OP>
 void Eval(const TBlob &lhs, const TBlob &rhs, TBlob *ret, RunContext ctx);
@@ -129,6 +168,19 @@ template<typename Device>
 void ElementwiseSum(const std::vector<TBlob> source,
                     TBlob *out,
                     RunContext ctx);
+
+/*!
+ * \brief Interface for parallel impl of elemwise sum for sparse matrices
+ */
+template<typename xpu>
+void ElementwiseSum(mshadow::Stream<xpu>* s,
+                    const Resource& rsc,
+                    const std::vector<NDArray>& nds,
+                    NDArray* out);
+
+// broadcasting
+template <typename Device>
+void EvalBroadcast(TBlob const& src, TBlob* ret, int size, RunContext ctx);
 
 }  // namespace ndarray
 }  // namespace mxnet

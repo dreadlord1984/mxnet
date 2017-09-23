@@ -1,15 +1,31 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 /*!
- *  Copyright (c) 2015 by Contributors
  * \file mxrtc.cc
  * \brief Wrapper for NVRTC
  * \author Junyuan Xie
  */
 #include <mxnet/mxrtc.h>
-#if MXNET_USE_CUDA
-
+#if ((MXNET_USE_CUDA) && (MXNET_USE_NVRTC))
 namespace mxnet {
-
-const std::string MXRtc::str_type = "float";
+const char MXRtc::str_type[] = "float";
 std::unordered_map<std::string, char*> MXRtc::kernel_registry;
 
 MXRtc::MXRtc(const std::string& name,
@@ -73,7 +89,8 @@ void MXRtc::push(std::vector<NDArray> const& input,
     std::vector<Engine::VarHandle> var_in, var_out;
     for (auto& i : input) var_in.push_back(i.var());
     for (auto& i : output) var_out.push_back(i.var());
-    Engine::Get()->PushSync(op, output[0].ctx(), var_in, var_out);
+    Engine::Get()->PushSync(op, output[0].ctx(), var_in, var_out,
+            FnProperty::kNormal, 0, PROFILER_MESSAGE("MXRtc"));
 }
 
 std::string MXRtc::decorate(const std::string& name,
@@ -81,36 +98,36 @@ std::string MXRtc::decorate(const std::string& name,
                          std::vector<std::pair<std::string, NDArray> > const& output,
                          const std::string kernel) {
     std::string source;
-    source += "\nextern \"C\" __global__ void " + name + "(";
+    source = source + "\nextern \"C\" __global__ void " + name + "(";
     for (auto &i : input) {
-        source += "const " + str_type + "* " + i.first + ",";
+        source = source + "const " + str_type + "* " + i.first + ",";
     }
     for (auto &i : output) {
-        source += str_type + "* " + i.first + ",";
+        source = source + str_type + "* " + i.first + ",";
     }
     source.pop_back();
     source = source + ") {\n";
     for (auto &i : input) {
-        source += "const int " + i.first + "_ndim = " +
+        source = source + "const int " + i.first + "_ndim = " +
                   std::to_string(i.second.shape().ndim()) + ";\n";
-        source += "const int " + i.first + "_dims[] = {";
+        source = source + "const int " + i.first + "_dims[] = {";
         for (index_t j = 0; j < i.second.shape().ndim(); ++j) {
-            source += std::to_string(i.second.shape()[j]) + ",";
+            source = source + std::to_string(i.second.shape()[j]) + ",";
         }
         source.pop_back();
-        source += "};\n";
+        source = source + "};\n";
     }
     for (auto &i : output) {
-        source += "const int " + i.first + "_ndim = " +
+        source = source + "const int " + i.first + "_ndim = " +
                   std::to_string(i.second.shape().ndim()) + ";\n";
-        source += "const int " + i.first + "_dims[] = {";
+        source = source + "const int " + i.first + "_dims[] = {";
         for (index_t j = 0; j < i.second.shape().ndim(); ++j) {
-            source += std::to_string(i.second.shape()[j]) + ",";
+            source = source + std::to_string(i.second.shape()[j]) + ",";
         }
         source.pop_back();
-        source += "};\n";
+        source = source + "};\n";
     }
-    source += kernel + "\n}\n";
+    source = source + kernel + "\n}\n";
     return source;
 }
 
@@ -139,4 +156,4 @@ char* MXRtc::compile(const std::string& name, const std::string& code) {
 
 }  // namespace mxnet
 
-#endif  // MXNET_USE_CUDA
+#endif  // ((MXNET_USE_CUDA) && (MXNET_USE_NVRTC))
